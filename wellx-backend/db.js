@@ -1,16 +1,31 @@
 const sqlite3 = require("sqlite3").verbose();
 const path = require("path");
+
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, "wellx.db");
 const db = new sqlite3.Database(DB_PATH);
 
 function run(sql, params = []) {
-  return new Promise((resolve, reject) => db.run(sql, params, function(err){ err ? reject(err) : resolve(this); }));
+  return new Promise((resolve, reject) =>
+    db.run(sql, params, function (err) {
+      err ? reject(err) : resolve(this);
+    })
+  );
 }
+
 function get(sql, params = []) {
-  return new Promise((resolve, reject) => db.get(sql, params, function(err,row){ err ? reject(err) : resolve(row); }));
+  return new Promise((resolve, reject) =>
+    db.get(sql, params, function (err, row) {
+      err ? reject(err) : resolve(row);
+    })
+  );
 }
+
 function all(sql, params = []) {
-  return new Promise((resolve, reject) => db.all(sql, params, function(err,rows){ err ? reject(err) : resolve(rows); }));
+  return new Promise((resolve, reject) =>
+    db.all(sql, params, function (err, rows) {
+      err ? reject(err) : resolve(rows);
+    })
+  );
 }
 
 async function initDb() {
@@ -24,6 +39,7 @@ async function initDb() {
     status TEXT NOT NULL,
     created_at_utc TEXT NOT NULL
   )`);
+
   await run(`CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     record_id INTEGER NOT NULL,
@@ -32,11 +48,13 @@ async function initDb() {
     created_at_utc TEXT NOT NULL,
     FOREIGN KEY(record_id) REFERENCES records(id)
   )`);
+
   await run(`CREATE TABLE IF NOT EXISTS app_kv (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
     updated_at_utc TEXT NOT NULL
   )`);
+
   await run(`CREATE TABLE IF NOT EXISTS rule_evaluations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     record_id INTEGER NOT NULL,
@@ -49,6 +67,7 @@ async function initDb() {
     created_at_utc TEXT NOT NULL,
     FOREIGN KEY(record_id) REFERENCES records(id)
   )`);
+
   await run(`CREATE TABLE IF NOT EXISTS rule_sets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     version TEXT NOT NULL UNIQUE,
@@ -62,6 +81,7 @@ async function initDb() {
     created_by TEXT,
     notes TEXT
   )`);
+
   await run(`CREATE TABLE IF NOT EXISTS rule_set_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     rule_set_version TEXT NOT NULL,
@@ -70,6 +90,7 @@ async function initDb() {
     details_json TEXT,
     created_at_utc TEXT NOT NULL
   )`);
+
   await run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT NOT NULL UNIQUE,
@@ -78,17 +99,6 @@ async function initDb() {
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at_utc TEXT NOT NULL
   )`);
-}
-
-async function setKv(key, value) {
-  const now = new Date().toISOString();
-  await run("INSERT INTO app_kv(key,value,updated_at_utc) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at_utc=excluded.updated_at_utc", [key, value, now]);
-}
-async function getKv(key) {
-  const row = await get("SELECT value FROM app_kv WHERE key = ?", [key]);
-  return row ? row.value : null;
-}
-
 
   await run(`CREATE TABLE IF NOT EXISTS audit_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,4 +109,23 @@ async function getKv(key) {
     details_json TEXT,
     created_at_utc TEXT NOT NULL
   )`);
+}
+
+async function setKv(key, value) {
+  const now = new Date().toISOString();
+  await run(
+    `INSERT INTO app_kv(key, value, updated_at_utc)
+     VALUES(?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET
+       value = excluded.value,
+       updated_at_utc = excluded.updated_at_utc`,
+    [key, value, now]
+  );
+}
+
+async function getKv(key) {
+  const row = await get("SELECT value FROM app_kv WHERE key = ?", [key]);
+  return row ? row.value : null;
+}
+
 module.exports = { db, run, get, all, initDb, setKv, getKv };
