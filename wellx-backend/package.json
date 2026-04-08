@@ -1,0 +1,18 @@
+{
+  "name": "wellx-mvp-v1-5",
+  "version": "1.5.0",
+  "description": "WellX MVP with role-based admin auth and rule approval workflow",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "sqlite3": "^5.1.7",
+    "xrpl": "^4.2.0",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3"
+  }
+}
