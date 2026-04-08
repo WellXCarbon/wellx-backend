@@ -118,7 +118,7 @@ app.post("/api/evaluate", requireApiKey, requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
 });
 
-app.get("/api/wallet-status", requireApiKey, requireAuth, async (req, res) => {
+app.get("/api/wallet-status", requireApiKey, async (req, res) => {
   try { res.json({ ok: true, wallet: await getWalletStatus() }); }
   catch (err) { res.status(500).json({ ok: false, error: err.message }); }
 });
