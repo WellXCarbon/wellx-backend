@@ -70,7 +70,7 @@ app.get("/api/auth/me", requireAuth, (req, res) => {
 app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
-    service: "wellx-mvp-v1.4",
+    service: "wellx-mvp-v1.5",
     env: process.env.NODE_ENV || "development"
   });
 });
@@ -224,57 +224,83 @@ app.post("/api/process", requireApiKey, async (req, res) => {
       [recordId, "rules_evaluated", `Outcome: ${evaluation.final_outcome}`, utcNow()]
     );
 
-    const xrplPayload = {
-      decision_hash: evaluation.decision_hash,
-      rule_version: evaluation.rule_set_version,
-      outcome: evaluation.final_outcome
-    };
+    const existingRecord = await get(
+      "SELECT xrpl_tx_hash FROM records WHERE id = ?",
+      [recordId]
+    );
 
     let xrpl_tx_hash = null;
     let xrpl_explorer_url = null;
     let wallet_address = null;
     let xrpl_anchor_error = null;
+    let xrpl_anchor_status = "anchor_skipped";
 
-    try {
-      const xrpl = await anchorToXRPL(xrplPayload);
+    if (existingRecord && existingRecord.xrpl_tx_hash) {
+      xrpl_anchor_status = "anchor_skipped";
+    } else {
+      const xrplPayload = {
+        record_id: recordId,
+        well_id: wellId,
+        decision_hash: evaluation.decision_hash,
+        rule_version: evaluation.rule_set_version,
+        outcome: evaluation.final_outcome,
+        anchored_at_utc: utcNow(),
+        nonce: crypto.randomUUID()
+      };
 
-      xrpl_tx_hash = xrpl?.txHash || null;
-      xrpl_explorer_url = xrpl?.explorerUrl || null;
-      wallet_address = xrpl?.walletAddress || null;
+      try {
+        const xrpl = await anchorToXRPL(xrplPayload);
 
-      const finalStatus =
-        evaluation.status === "RULES_PASSED"
-          ? "ANCHORED_ELIGIBLE"
-          : "ANCHORED_REJECTED";
+        xrpl_tx_hash = xrpl?.txHash || null;
+        xrpl_explorer_url = xrpl?.explorerUrl || null;
+        wallet_address = xrpl?.walletAddress || null;
+        xrpl_anchor_status = "anchored";
 
-      await run(
-        "UPDATE records SET xrpl_tx_hash = ?, xrpl_explorer_url = ?, status = ? WHERE id = ?",
-        [xrpl_tx_hash, xrpl_explorer_url, finalStatus, recordId]
-      );
+        const finalStatus =
+          evaluation.status === "RULES_PASSED"
+            ? "ANCHORED_ELIGIBLE"
+            : "ANCHORED_REJECTED";
 
-      await run(
-        "INSERT INTO events (record_id, event_type, message, created_at_utc) VALUES (?, ?, ?, ?)",
-        [recordId, "xrpl_anchored", `Anchored on XRPL: ${xrpl_tx_hash}`, utcNow()]
-      );
-    } catch (err) {
-      xrpl_anchor_error = err.message;
+        await run(
+          "UPDATE records SET xrpl_tx_hash = ?, xrpl_explorer_url = ?, status = ? WHERE id = ?",
+          [xrpl_tx_hash, xrpl_explorer_url, finalStatus, recordId]
+        );
 
-      const finalStatus =
-        evaluation.status === "RULES_PASSED"
-          ? "ELIGIBLE_PENDING_ANCHOR"
-          : "REJECTED_PENDING_ANCHOR";
+        await run(
+          "INSERT INTO events (record_id, event_type, message, created_at_utc) VALUES (?, ?, ?, ?)",
+          [
+            recordId,
+            "xrpl_anchored",
+            JSON.stringify({
+              txHash: xrpl_tx_hash,
+              explorerUrl: xrpl_explorer_url,
+              walletAddress: wallet_address,
+              payload: xrplPayload
+            }),
+            utcNow()
+          ]
+        );
+      } catch (err) {
+        xrpl_anchor_error = err.message;
+        xrpl_anchor_status = "anchor_failed";
 
-      await run(
-        "UPDATE records SET status = ? WHERE id = ?",
-        [finalStatus, recordId]
-      );
+        const finalStatus =
+          evaluation.status === "RULES_PASSED"
+            ? "ELIGIBLE_PENDING_ANCHOR"
+            : "REJECTED_PENDING_ANCHOR";
 
-      await run(
-        "INSERT INTO events (record_id, event_type, message, created_at_utc) VALUES (?, ?, ?, ?)",
-        [recordId, "xrpl_anchor_failed", `XRPL anchor failed: ${xrpl_anchor_error}`, utcNow()]
-      );
+        await run(
+          "UPDATE records SET status = ? WHERE id = ?",
+          [finalStatus, recordId]
+        );
 
-      console.error("XRPL anchor failed:", xrpl_anchor_error);
+        await run(
+          "INSERT INTO events (record_id, event_type, message, created_at_utc) VALUES (?, ?, ?, ?)",
+          [recordId, "xrpl_anchor_failed", `XRPL anchor failed: ${xrpl_anchor_error}`, utcNow()]
+        );
+
+        console.error("XRPL anchor failed:", xrpl_anchor_error);
+      }
     }
 
     res.json({
@@ -291,6 +317,7 @@ app.post("/api/process", requireApiKey, async (req, res) => {
       xrpl_tx_hash,
       xrpl_explorer_url,
       wallet_address,
+      xrpl_anchor_status,
       xrpl_anchor_error
     });
   } catch (err) {
@@ -407,5 +434,5 @@ app.get("/", (req, res) => {
 initDb().then(async () => {
   await ensureBootstrapAdmin();
   await ensureDefaultRuleSet();
-  app.listen(PORT, () => console.log(`WellX MVP v1.4 running on http://localhost:${PORT}`));
+  app.listen(PORT, () => console.log(`WellX MVP v1.5 running on http://localhost:${PORT}`));
 });
