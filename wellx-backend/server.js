@@ -123,7 +123,7 @@ app.get("/api/wallet-status", requireApiKey, async (req, res) => {
   catch (err) { res.status(500).json({ ok: false, error: err.message }); }
 });
 
-app.post("/api/process", requireApiKey, requireAuth, async (req, res) => {
+app.post("/api/process", requireApiKey, async (req, res) => {
   try {
     const payload = req.body;
     const wellId = payload.well_id || "UNKNOWN";
