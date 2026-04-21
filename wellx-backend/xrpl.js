@@ -67,6 +67,7 @@ async function getWalletStatus() {
 }
 
 async function anchorToXRPL(payloadObject) {
+  console.log("XRPL anchor version check", new Date().toISOString(), payloadObject);
   const client = await getClient();
 
   try {
