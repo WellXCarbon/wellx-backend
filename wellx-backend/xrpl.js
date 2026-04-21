@@ -94,13 +94,19 @@ async function anchorToXRPL(payloadObject) {
       ledger_index: "current",
     });
 
+    const currentLedger = await client.request({
+      command: "ledger_current",
+    });
+
     const sequence = accountInfo.result.account_data.Sequence;
+    const currentLedgerIndex = currentLedger.result.ledger_current_index;
 
     const tx = {
       TransactionType: "AccountSet",
       Account: wallet.classicAddress,
       Sequence: sequence,
       Fee: "12",
+      LastLedgerSequence: currentLedgerIndex + 20,
       Memos: [
         {
           Memo: {
