@@ -1,11 +1,14 @@
 const xrpl = require("xrpl");
 const { setKv, getKv } = require("./db");
 
-const XRPL_CLIENT_URL = process.env.XRPL_CLIENT_URL || "wss://s.altnet.rippletest.net:51233";
-const XRPL_EXPLORER_BASE = process.env.XRPL_EXPLORER_BASE || "https://testnet.xrpl.org/transactions/";
+const XRPL_CLIENT_URL =
+  process.env.XRPL_CLIENT_URL || "wss://s.altnet.rippletest.net:51233";
+const XRPL_EXPLORER_BASE =
+  process.env.XRPL_EXPLORER_BASE || "https://testnet.xrpl.org/transactions/";
 const XRPL_WALLET_SEED = process.env.XRPL_WALLET_SEED || "";
 const XRPL_WALLET_ADDRESS = process.env.XRPL_WALLET_ADDRESS || "";
-const AUTO_FUND_TESTNET = (process.env.AUTO_FUND_TESTNET || "true").toLowerCase() === "true";
+const AUTO_FUND_TESTNET =
+  (process.env.AUTO_FUND_TESTNET || "true").toLowerCase() === "true";
 
 async function getClient() {
   const client = new xrpl.Client(XRPL_CLIENT_URL);
@@ -24,7 +27,9 @@ async function loadOrCreateWallet() {
   }
 
   if (!AUTO_FUND_TESTNET) {
-    throw new Error("No XRPL wallet configured. Set XRPL_WALLET_SEED or enable AUTO_FUND_TESTNET.");
+    throw new Error(
+      "No XRPL wallet configured. Set XRPL_WALLET_SEED or enable AUTO_FUND_TESTNET."
+    );
   }
 
   const client = await getClient();
@@ -45,21 +50,22 @@ async function getWalletStatus() {
     const accountInfo = await client.request({
       command: "account_info",
       account: wallet.classicAddress,
-      ledger_index: "validated"
+      ledger_index: "validated",
     });
+
     return {
       address: wallet.classicAddress,
       source,
       funded: true,
       balance_drops: accountInfo.result.account_data.Balance,
-      sequence: accountInfo.result.account_data.Sequence
+      sequence: accountInfo.result.account_data.Sequence,
     };
   } catch (err) {
     return {
       address: XRPL_WALLET_ADDRESS || null,
       source: XRPL_WALLET_SEED ? "env" : "unknown",
       funded: false,
-      error: err.message
+      error: err.message,
     };
   } finally {
     await client.disconnect();
@@ -68,6 +74,7 @@ async function getWalletStatus() {
 
 async function anchorToXRPL(payloadObject) {
   console.log("XRPL anchor version check", new Date().toISOString(), payloadObject);
+
   const client = await getClient();
 
   try {
@@ -81,12 +88,19 @@ async function anchorToXRPL(payloadObject) {
 
     const memoString = JSON.stringify(uniquePayload);
 
-    const prepared = await client.autofill({
-      TransactionType: "Payment",
+    const accountInfo = await client.request({
+      command: "account_info",
+      account: wallet.classicAddress,
+      ledger_index: "current",
+    });
+
+    const sequence = accountInfo.result.account_data.Sequence;
+
+    const tx = {
+      TransactionType: "AccountSet",
       Account: wallet.classicAddress,
-      Destination: wallet.classicAddress,
-      Amount: "1",
-      SourceTag: Math.floor(Math.random() * 4294967295),
+      Sequence: sequence,
+      Fee: "12",
       Memos: [
         {
           Memo: {
@@ -96,10 +110,16 @@ async function anchorToXRPL(payloadObject) {
           },
         },
       ],
-    });
+    };
 
-    const signed = wallet.sign(prepared);
+    const signed = wallet.sign(tx);
     const result = await client.submitAndWait(signed.tx_blob);
+
+    const txResult = result?.result?.meta?.TransactionResult;
+
+    if (txResult !== "tesSUCCESS") {
+      throw new Error(`Transaction failed, ${txResult || "unknown result"}`);
+    }
 
     return {
       txHash: result.result.hash,
