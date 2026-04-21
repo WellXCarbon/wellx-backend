@@ -85,6 +85,7 @@ async function anchorToXRPL(payloadObject) {
       Account: wallet.classicAddress,
       Destination: wallet.classicAddress,
       Amount: "1",
+      SourceTag: Math.floor(Math.random() * 4294967295),
       Memos: [
         {
           Memo: {
