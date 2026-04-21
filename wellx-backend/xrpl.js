@@ -68,16 +68,32 @@ async function getWalletStatus() {
 
 async function anchorToXRPL(payloadObject) {
   const client = await getClient();
+
   try {
     const { wallet } = await loadOrCreateWallet();
-    const memoString = JSON.stringify(payloadObject);
+
+    const uniquePayload = {
+      ...payloadObject,
+      nonce: `${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
+      anchored_at_utc: new Date().toISOString(),
+    };
+
+    const memoString = JSON.stringify(uniquePayload);
 
     const prepared = await client.autofill({
       TransactionType: "Payment",
       Account: wallet.classicAddress,
       Destination: wallet.classicAddress,
       Amount: "1",
-      Memos: [{ Memo: { MemoData: Buffer.from(memoString, "utf8").toString("hex") } }]
+      Memos: [
+        {
+          Memo: {
+            MemoType: Buffer.from("wellx-proof", "utf8").toString("hex"),
+            MemoFormat: Buffer.from("application/json", "utf8").toString("hex"),
+            MemoData: Buffer.from(memoString, "utf8").toString("hex"),
+          },
+        },
+      ],
     });
 
     const signed = wallet.sign(prepared);
@@ -87,7 +103,7 @@ async function anchorToXRPL(payloadObject) {
       txHash: result.result.hash,
       explorerUrl: `${XRPL_EXPLORER_BASE}${result.result.hash}`,
       walletAddress: wallet.classicAddress,
-      memo_payload: payloadObject
+      memo_payload: uniquePayload,
     };
   } finally {
     await client.disconnect();
