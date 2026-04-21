@@ -109,6 +109,19 @@ async function initDb() {
     details_json TEXT,
     created_at_utc TEXT NOT NULL
   )`);
+
+  // Safe schema upgrades for existing databases
+  try {
+    await run(`ALTER TABLE records ADD COLUMN mpt_asset_id TEXT`);
+  } catch (err) {}
+
+  try {
+    await run(`ALTER TABLE records ADD COLUMN mpt_tx_hash TEXT`);
+  } catch (err) {}
+
+  try {
+    await run(`ALTER TABLE records ADD COLUMN mpt_issued_at_utc TEXT`);
+  } catch (err) {}
 }
 
 async function setKv(key, value) {
