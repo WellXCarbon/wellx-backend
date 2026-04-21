@@ -45,6 +45,32 @@ function requireApiKey(req, res, next) {
   next();
 }
 
+function buildMptAsset(record) {
+  return {
+    asset_id: record.well_id,
+    decision_hash: record.decision_hash,
+    rule_version: record.rule_set_version,
+    verification_status: record.final_outcome,
+    xrpl_anchor_tx: record.xrpl_tx_hash,
+    issued_at_utc: utcNow(),
+    issuer: "WellX Carbon Intelligence",
+    proof_type: "deterministic_mrv",
+    token_class: "environmental_asset"
+  };
+}
+
+async function issueMPT(asset) {
+  const syntheticId = `MPT-${asset.asset_id}-${Date.now()}`;
+  const syntheticTx = `mpt_tx_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+  return {
+    mptAssetId: syntheticId,
+    txHash: syntheticTx,
+    issuedAt: utcNow(),
+    asset
+  };
+}
+
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -70,7 +96,7 @@ app.get("/api/auth/me", requireAuth, (req, res) => {
 app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
-    service: "wellx-mvp-v1.5",
+    service: "wellx-mvp-v1.6",
     env: process.env.NODE_ENV || "development"
   });
 });
@@ -237,14 +263,12 @@ app.post("/api/process", requireApiKey, async (req, res) => {
 
     if (existingRecord && existingRecord.xrpl_tx_hash) {
       xrpl_anchor_status = "anchor_skipped";
+      xrpl_tx_hash = existingRecord.xrpl_tx_hash || null;
     } else {
       const xrplPayload = {
-        record_id: recordId,
-        well_id: wellId,
         decision_hash: evaluation.decision_hash,
         rule_version: evaluation.rule_set_version,
         outcome: evaluation.final_outcome,
-        anchored_at_utc: utcNow(),
         nonce: crypto.randomUUID()
       };
 
@@ -257,7 +281,7 @@ app.post("/api/process", requireApiKey, async (req, res) => {
         xrpl_anchor_status = "anchored";
 
         const finalStatus =
-          evaluation.status === "RULES_PASSED"
+          evaluation.final_outcome === "ELIGIBLE_FOR_REVIEW"
             ? "ANCHORED_ELIGIBLE"
             : "ANCHORED_REJECTED";
 
@@ -285,7 +309,7 @@ app.post("/api/process", requireApiKey, async (req, res) => {
         xrpl_anchor_status = "anchor_failed";
 
         const finalStatus =
-          evaluation.status === "RULES_PASSED"
+          evaluation.final_outcome === "ELIGIBLE_FOR_REVIEW"
             ? "ELIGIBLE_PENDING_ANCHOR"
             : "REJECTED_PENDING_ANCHOR";
 
@@ -303,6 +327,12 @@ app.post("/api/process", requireApiKey, async (req, res) => {
       }
     }
 
+    const tokenization_ready =
+      evaluation.final_outcome === "ELIGIBLE_FOR_REVIEW" &&
+      xrpl_anchor_status === "anchored";
+
+    const mpt_status = tokenization_ready ? "ready_for_issuance" : "not_ready";
+
     res.json({
       ok: true,
       record_id: recordId,
@@ -318,7 +348,86 @@ app.post("/api/process", requireApiKey, async (req, res) => {
       xrpl_explorer_url,
       wallet_address,
       xrpl_anchor_status,
-      xrpl_anchor_error
+      xrpl_anchor_error,
+      tokenization_ready,
+      mpt_status
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.post("/api/mpt/issue", requireApiKey, async (req, res) => {
+  try {
+    const { record_id } = req.body;
+
+    if (!record_id) {
+      return res.status(400).json({ ok: false, error: "record_id required" });
+    }
+
+    const record = await get(
+      `SELECT r.*, e.final_outcome, e.decision_hash, e.rule_set_version
+       FROM records r
+       LEFT JOIN rule_evaluations e ON e.record_id = r.id
+       WHERE r.id = ?`,
+      [record_id]
+    );
+
+    if (!record) {
+      return res.status(404).json({ ok: false, error: "record not found" });
+    }
+
+    const tokenization_ready =
+      record.final_outcome === "ELIGIBLE_FOR_REVIEW" &&
+      !!record.xrpl_tx_hash;
+
+    if (!tokenization_ready) {
+      return res.status(400).json({
+        ok: false,
+        error: "record_not_tokenization_ready"
+      });
+    }
+
+    const mptAsset = buildMptAsset(record);
+    const issued = await issueMPT(mptAsset);
+
+    await run(
+      `UPDATE records
+       SET status = ?, mpt_asset_id = ?, mpt_tx_hash = ?, mpt_issued_at_utc = ?
+       WHERE id = ?`,
+      [
+        "MPT_ISSUED",
+        issued.mptAssetId,
+        issued.txHash,
+        issued.issuedAt,
+        record_id
+      ]
+    );
+
+    await run(
+      "INSERT INTO events (record_id, event_type, message, created_at_utc) VALUES (?, ?, ?, ?)",
+      [
+        record_id,
+        "mpt_issued",
+        JSON.stringify({
+          mptAssetId: issued.mptAssetId,
+          txHash: issued.txHash,
+          issuedAt: issued.issuedAt,
+          asset: issued.asset
+        }),
+        utcNow()
+      ]
+    );
+
+    res.json({
+      ok: true,
+      record_id,
+      tokenization_ready: true,
+      mpt_status: "issued",
+      mpt_asset_id: issued.mptAssetId,
+      mpt_tx_hash: issued.txHash,
+      mpt_issued_at_utc: issued.issuedAt
     });
   } catch (err) {
     console.error(err);
@@ -352,7 +461,10 @@ app.post("/api/verify", requireApiKey, requireAuth, async (req, res) => {
       decision_hash: evalRow ? evalRow.decision_hash : null,
       rule_set_version: evalRow ? evalRow.rule_set_version : null,
       xrpl_tx_hash: record.xrpl_tx_hash,
-      xrpl_explorer_url: record.xrpl_explorer_url
+      xrpl_explorer_url: record.xrpl_explorer_url,
+      mpt_asset_id: record.mpt_asset_id || null,
+      mpt_tx_hash: record.mpt_tx_hash || null,
+      mpt_issued_at_utc: record.mpt_issued_at_utc || null
     });
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message });
@@ -434,5 +546,5 @@ app.get("/", (req, res) => {
 initDb().then(async () => {
   await ensureBootstrapAdmin();
   await ensureDefaultRuleSet();
-  app.listen(PORT, () => console.log(`WellX MVP v1.5 running on http://localhost:${PORT}`));
+  app.listen(PORT, () => console.log(`WellX MVP v1.6 running on http://localhost:${PORT}`));
 });
